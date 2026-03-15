@@ -12,8 +12,11 @@ import {
   Plus,
   Menu,
   X,
+  LogOut,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { useAuth } from "../../lib/AuthContext";
+import { AuthScreen } from "./auth/AuthScreen";
 
 const navigation = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard },
@@ -44,6 +47,31 @@ const legalNavigation = [
 export function Layout() {
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user, loading, signOut } = useAuth();
+
+  // Show loading spinner while checking auth
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center mx-auto animate-pulse">
+            <FileText className="w-10 h-10 text-primary-foreground" />
+          </div>
+          <p className="text-lg text-muted-foreground">Invox wird geladen...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show auth screen if not logged in
+  if (!user) {
+    return <AuthScreen />;
+  }
+
+  const handleSignOut = async () => {
+    await signOut();
+    setMobileMenuOpen(false);
+  };
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -91,16 +119,36 @@ export function Layout() {
           })}
         </nav>
 
-        <div className="p-4 border-t border-sidebar-border">
+        <div className="p-4 border-t border-sidebar-border space-y-4">
           <Link to="/erstellen">
             <Button className="w-full h-14 text-lg gap-3">
               <Plus className="w-6 h-6" />
               Neu erstellen
             </Button>
           </Link>
+
+          {/* User Info & Logout */}
+          <div className="pt-4 border-t border-sidebar-border/50 space-y-3">
+            <div className="px-2 space-y-1">
+              <p className="text-sm font-medium truncate">{user.email}</p>
+              {user.user_metadata?.company && (
+                <p className="text-xs text-sidebar-foreground/60 truncate">
+                  {user.user_metadata.company}
+                </p>
+              )}
+            </div>
+            <Button
+              variant="outline"
+              className="w-full justify-start gap-2"
+              onClick={handleSignOut}
+            >
+              <LogOut className="w-4 h-4" />
+              Abmelden
+            </Button>
+          </div>
           
           {/* Legal Links */}
-          <div className="mt-4 pt-4 border-t border-sidebar-border/50 space-y-2">
+          <div className="pt-4 border-t border-sidebar-border/50 space-y-2">
             {legalNavigation.map((item) => (
               <Link
                 key={item.path}
@@ -174,6 +222,26 @@ export function Layout() {
                 Neu erstellen
               </Button>
             </Link>
+
+            {/* User Info & Logout in Mobile Menu */}
+            <div className="mt-6 pt-6 border-t border-border space-y-3">
+              <div className="px-2 space-y-1">
+                <p className="text-base font-medium">{user.email}</p>
+                {user.user_metadata?.company && (
+                  <p className="text-sm text-muted-foreground">
+                    {user.user_metadata.company}
+                  </p>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                className="w-full h-14 text-lg justify-start gap-3"
+                onClick={handleSignOut}
+              >
+                <LogOut className="w-6 h-6" />
+                Abmelden
+              </Button>
+            </div>
 
             {/* Legal Links in Mobile Menu */}
             <div className="mt-6 pt-6 border-t border-border space-y-3">

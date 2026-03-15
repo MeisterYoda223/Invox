@@ -10,7 +10,10 @@ import {
   Phone,
   Video,
   BookOpen,
+  Settings,
 } from "lucide-react";
+import { SupabaseConnectionTest } from "../components/debug/SupabaseConnectionTest";
+import { useState } from "react";
 
 const helpTopics = [
   {
@@ -71,6 +74,8 @@ const contactOptions = [
 ];
 
 export function Help() {
+  const [isConnectionTestVisible, setConnectionTestVisible] = useState(false);
+
   return (
     <div className="p-4 sm:p-6 lg:p-12 space-y-6 lg:space-y-8">
       <div>
@@ -205,6 +210,36 @@ export function Help() {
             Zum Hilfezentrum
           </Button>
         </div>
+      </Card>
+
+      {/* Debugging Section */}
+      <Card className="p-6 sm:p-8 bg-red-500/10 border-red-500/20">
+        <div className="flex flex-col sm:flex-row items-start gap-4 sm:gap-6">
+          <div className="p-3 sm:p-4 rounded-lg bg-red-500/20 flex-shrink-0">
+            <Settings className="w-8 h-8 sm:w-10 sm:h-10 text-red-500" />
+          </div>
+          <div className="flex-1 space-y-3 sm:space-y-4">
+            <h2 className="text-xl sm:text-2xl">Debugging</h2>
+            <p className="text-base sm:text-lg text-muted-foreground leading-relaxed">
+              Hier können Sie die Verbindung zu Supabase testen, um sicherzustellen,
+              dass alles korrekt eingerichtet ist.
+            </p>
+            <Button
+              variant="outline"
+              size="lg"
+              className="mt-2 h-12 text-sm sm:text-base w-full sm:w-auto"
+              onClick={() => setConnectionTestVisible(!isConnectionTestVisible)}
+            >
+              {isConnectionTestVisible ? "Test ausblenden" : "Verbindung testen"}
+            </Button>
+          </div>
+        </div>
+        
+        {isConnectionTestVisible && (
+          <div className="mt-6">
+            <SupabaseConnectionTest />
+          </div>
+        )}
       </Card>
     </div>
   );

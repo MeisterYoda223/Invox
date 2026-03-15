@@ -27,9 +27,10 @@ export const router = createBrowserRouter([
       { path: "leistungen", Component: Services },
       { path: "hilfe", Component: Help },
       { path: "einstellungen", Component: Settings },
-      { path: "impressum", Component: Imprint },
-      { path: "datenschutz", Component: Privacy },
-      { path: "nutzungsbedingungen", Component: Terms },
     ],
   },
+  // Legal pages accessible without auth
+  { path: "impressum", Component: Imprint },
+  { path: "datenschutz", Component: Privacy },
+  { path: "nutzungsbedingungen", Component: Terms },
 ]);
