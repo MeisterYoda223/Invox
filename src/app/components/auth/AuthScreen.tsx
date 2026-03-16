@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { Card } from "../ui/card";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -7,6 +7,7 @@ import { Label } from "../ui/label";
 import { FileText, Loader2 } from "lucide-react";
 import { useAuth } from "../../../lib/AuthContext";
 import { toast } from "sonner";
+import { supabase } from "../../../lib/supabase";
 
 export function AuthScreen() {
   const [isLogin, setIsLogin] = useState(true);
@@ -19,7 +20,7 @@ export function AuthScreen() {
     company: "",
   });
 
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, checkInvitation } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,20 +51,37 @@ export function AuthScreen() {
           return;
         }
 
-        const { error } = await signUp(formData.email, formData.password, {
-          name: formData.name,
-          company: formData.company,
-        });
+        // Prüfe ob Einladung existiert
+        const invitation = await checkInvitation(formData.email);
+        
+        if (!invitation && (!formData.company || formData.company.trim() === '')) {
+          toast.error("Firmenname ist erforderlich");
+          setLoading(false);
+          return;
+        }
+
+        // Registriere User (Company wird automatisch erstellt)
+        const { error } = await signUp(
+          formData.email, 
+          formData.password, 
+          formData.name,
+          formData.company
+        );
 
         if (error) {
           toast.error("Registrierung fehlgeschlagen", {
             description: error.message || "Bitte versuchen Sie es erneut.",
           });
         } else {
-          toast.success("Erfolgreich registriert!", {
-            description: "Sie können sich jetzt anmelden.",
-          });
-          setIsLogin(true);
+          if (invitation) {
+            toast.success("Erfolgreich registriert!", {
+              description: "Sie wurden dem Unternehmen hinzugefügt.",
+            });
+          } else {
+            toast.success("Erfolgreich registriert!", {
+              description: "Ihr Unternehmen wurde erstellt.",
+            });
+          }
         }
       }
     } catch (error: any) {

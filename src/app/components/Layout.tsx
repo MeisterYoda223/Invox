@@ -49,8 +49,11 @@ export function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { user, loading, signOut } = useAuth();
 
-  // Show loading spinner while checking auth
-  if (loading) {
+  // Check if we're on a legal page (these don't require auth)
+  const isLegalPage = ['/impressum', '/datenschutz', '/nutzungsbedingungen'].includes(location.pathname);
+
+  // Show loading spinner while checking auth (but not for legal pages)
+  if (loading && !isLegalPage) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-4">
@@ -59,6 +62,30 @@ export function Layout() {
           </div>
           <p className="text-lg text-muted-foreground">Invox wird geladen...</p>
         </div>
+      </div>
+    );
+  }
+
+  // Show legal pages without auth requirement
+  if (isLegalPage) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="border-b border-border">
+          <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+            <Link to="/" className="flex items-center gap-2">
+              <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
+                <FileText className="w-6 h-6 text-primary-foreground" />
+              </div>
+              <h1 className="text-2xl font-bold text-primary">Invox</h1>
+            </Link>
+            {user && (
+              <Link to="/">
+                <Button variant="outline">Zurück zur App</Button>
+              </Link>
+            )}
+          </div>
+        </div>
+        <Outlet />
       </div>
     );
   }
