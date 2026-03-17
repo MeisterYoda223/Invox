@@ -1,10 +1,11 @@
 {
-  "name": "@figma/my-make-file",
+  "name": "@jlcodeworks/invox",
   "private": true,
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build": "vite build"
+    "build": "vite build",
+    "dev": "vite"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
