@@ -11,275 +11,313 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { Plus, Trash2, FileText, Receipt, Download } from "lucide-react";
+import { Plus, Trash2, FileText, Receipt, Loader2, Check } from "lucide-react";
+import { useAuth } from "../../lib/AuthContext";
+import { useCustomers, useServices, formatCurrency, getCustomerName } from "../../lib/useSupabaseData";
+import { supabase } from "../../lib/supabase";
+import { toast } from "sonner";
+import { useNavigate } from "react-router";
 
-const customers = [
-  "Müller GmbH",
-  "Schmidt Bau",
-  "Wagner Elektrik",
-  "Fischer Installation",
-  "Becker Malerei",
-];
+interface LineItem {
+  description: string;
+  quantity: string;
+  unit: string;
+  unit_price: string;
+}
 
-const serviceTemplates = [
-  { name: "Elektroinstallation", price: "65.00", unit: "Stunde" },
-  { name: "Montage", price: "55.00", unit: "Stunde" },
-  { name: "Reparatur", price: "70.00", unit: "Stunde" },
-  { name: "Material", price: "1.00", unit: "Pauschal" },
-  { name: "Fahrtkosten", price: "0.50", unit: "km" },
-];
+const UNITS = ['Stunde', 'Stück', 'km', 'Pauschal', 'm', 'm²', 'm³'];
 
 export function CreateQuoteInvoice() {
-  const [documentType, setDocumentType] = useState<"quote" | "invoice">("quote");
-  const [items, setItems] = useState([
-    { description: "", quantity: "", price: "", unit: "Stunde" },
+  const { userProfile, company } = useAuth();
+  const { customers, loading: customersLoading } = useCustomers();
+  const { services } = useServices();
+  const navigate = useNavigate();
+
+  const [documentType, setDocumentType] = useState<'quote' | 'invoice'>('quote');
+  const [customerId, setCustomerId] = useState('');
+  const [title, setTitle] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [secondDate, setSecondDate] = useState(''); // valid_until or due_date
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const [items, setItems] = useState<LineItem[]>([
+    { description: '', quantity: '1', unit: 'Stunde', unit_price: '' },
   ]);
 
-  const addItem = () => {
-    setItems([...items, { description: "", quantity: "", price: "", unit: "Stunde" }]);
+  const updateItem = (index: number, field: keyof LineItem, value: string) => {
+    setItems(prev => prev.map((item, i) => i === index ? { ...item, [field]: value } : item));
   };
 
-  const removeItem = (index: number) => {
-    setItems(items.filter((_, i) => i !== index));
+  const addItem = () => setItems(prev => [...prev, { description: '', quantity: '1', unit: 'Stunde', unit_price: '' }]);
+  const removeItem = (index: number) => setItems(prev => prev.filter((_, i) => i !== index));
+
+  const applyTemplate = (index: number, serviceId: string) => {
+    const service = services.find(s => s.id === serviceId);
+    if (!service) return;
+    updateItem(index, 'description', service.title);
+    updateItem(index, 'unit', service.unit);
+    updateItem(index, 'unit_price', String(service.unit_price));
   };
 
-  const calculateTotal = () => {
-    const subtotal = items.reduce((sum, item) => {
-      const itemTotal = (parseFloat(item.quantity) || 0) * (parseFloat(item.price) || 0);
-      return sum + itemTotal;
-    }, 0);
-    const tax = subtotal * 0.19;
-    const total = subtotal + tax;
-    return { subtotal, tax, total };
-  };
+  const calcItem = (item: LineItem) =>
+    (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0);
 
-  const { subtotal, tax, total } = calculateTotal();
+  const vatRate = company?.default_vat_rate ? Number(company.default_vat_rate) : 19;
+  const subtotal = items.reduce((sum, item) => sum + calcItem(item), 0);
+  const vatAmount = subtotal * (vatRate / 100);
+  const total = subtotal + vatAmount;
+
+  const handleSave = async () => {
+    if (!customerId) { toast.error('Bitte wählen Sie einen Kunden.'); return; }
+    if (!title.trim()) { toast.error('Bitte geben Sie einen Titel ein.'); return; }
+    if (items.every(i => !i.description)) { toast.error('Bitte fügen Sie mindestens eine Position hinzu.'); return; }
+    if (!userProfile?.company_id) return;
+
+    setSaving(true);
+    try {
+      const dbItems = items
+        .filter(i => i.description)
+        .map(i => ({
+          description: i.description,
+          quantity: parseFloat(i.quantity) || 0,
+          unit: i.unit,
+          unit_price: parseFloat(i.unit_price) || 0,
+          total: calcItem(i),
+        }));
+
+      if (documentType === 'quote') {
+        const { error } = await supabase.from('quotes').insert({
+          company_id: userProfile.company_id,
+          customer_id: customerId,
+          created_by: userProfile.id,
+          quote_number: company?.next_quote_number ?? `ANG-${Date.now()}`,
+          title: title.trim(),
+          status: 'draft',
+          subtotal,
+          vat_amount: vatAmount,
+          total,
+          quote_date: date,
+          valid_until: secondDate || null,
+          items: dbItems,
+          notes: notes || null,
+        });
+        if (error) throw error;
+        toast.success('Angebot wurde gespeichert!');
+      } else {
+        const paymentTerms = company?.payment_terms ?? 14;
+        const dueDate = secondDate || new Date(new Date(date).getTime() + paymentTerms * 86400000).toISOString().slice(0, 10);
+        const { error } = await supabase.from('invoices').insert({
+          company_id: userProfile.company_id,
+          customer_id: customerId,
+          created_by: userProfile.id,
+          invoice_number: company?.next_invoice_number ?? `RE-${Date.now()}`,
+          title: title.trim(),
+          status: 'draft',
+          subtotal,
+          vat_amount: vatAmount,
+          total,
+          invoice_date: date,
+          due_date: dueDate,
+          items: dbItems,
+          notes: notes || null,
+        });
+        if (error) throw error;
+        toast.success('Rechnung wurde gespeichert!');
+      }
+
+      navigate(documentType === 'quote' ? '/angebote' : '/rechnungen');
+    } catch (err: any) {
+      toast.error('Fehler beim Speichern', { description: err.message });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-12 space-y-6 lg:space-y-8 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 lg:p-12 space-y-6 lg:space-y-8 max-w-4xl mx-auto">
       <div>
         <h1 className="text-3xl sm:text-4xl mb-2">
-          {documentType === "quote" ? "Neues Angebot" : "Neue Rechnung"} erstellen
+          {documentType === 'quote' ? 'Neues Angebot' : 'Neue Rechnung'} erstellen
         </h1>
-        <p className="text-lg sm:text-xl text-muted-foreground">
-          Füllen Sie die Felder aus und erstellen Sie ein PDF
+        <p className="text-lg text-muted-foreground">
+          Füllen Sie die Felder aus und speichern Sie das Dokument
         </p>
       </div>
 
-      {/* Document Type Selection */}
+      {/* Typ */}
       <Card className="p-4 sm:p-6">
-        <div className="grid grid-cols-2 gap-3 sm:gap-4">
-          <Button
-            size="lg"
-            variant={documentType === "quote" ? "default" : "outline"}
-            className="h-14 sm:h-16 text-base sm:text-lg gap-2 sm:gap-3"
-            onClick={() => setDocumentType("quote")}
-          >
-            <FileText className="w-5 h-5 sm:w-6 sm:h-6" />
-            Angebot
+        <div className="grid grid-cols-2 gap-3">
+          <Button size="lg"
+            variant={documentType === 'quote' ? 'default' : 'outline'}
+            className="h-14 text-base gap-2"
+            onClick={() => setDocumentType('quote')}>
+            <FileText className="w-5 h-5" />Angebot
           </Button>
-          <Button
-            size="lg"
-            variant={documentType === "invoice" ? "default" : "outline"}
-            className="h-14 sm:h-16 text-base sm:text-lg gap-2 sm:gap-3"
-            onClick={() => setDocumentType("invoice")}
-          >
-            <Receipt className="w-5 h-5 sm:w-6 sm:h-6" />
-            Rechnung
+          <Button size="lg"
+            variant={documentType === 'invoice' ? 'default' : 'outline'}
+            className="h-14 text-base gap-2"
+            onClick={() => setDocumentType('invoice')}>
+            <Receipt className="w-5 h-5" />Rechnung
           </Button>
         </div>
       </Card>
 
-      {/* Customer Selection */}
-      <Card className="p-5 sm:p-8 space-y-5 sm:space-y-6">
-        <h2 className="text-xl sm:text-2xl">Kunde</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6">
-          <div className="space-y-3">
-            <Label className="text-base sm:text-lg">Kunde auswählen</Label>
-            <Select>
-              <SelectTrigger className="h-12 sm:h-14 text-base sm:text-lg">
-                <SelectValue placeholder="Kunde wählen..." />
-              </SelectTrigger>
-              <SelectContent>
-                {customers.map((customer) => (
-                  <SelectItem key={customer} value={customer} className="text-base sm:text-lg py-3">
-                    {customer}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+      {/* Kunde + Titel + Datum */}
+      <Card className="p-5 sm:p-8 space-y-5">
+        <h2 className="text-xl sm:text-2xl">Grunddaten</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div className="space-y-2">
+            <Label className="text-base">Kunde *</Label>
+            {customersLoading ? (
+              <div className="flex items-center gap-2 text-muted-foreground h-12">
+                <Loader2 className="w-4 h-4 animate-spin" /><span>Lade Kunden...</span>
+              </div>
+            ) : (
+              <Select value={customerId} onValueChange={setCustomerId}>
+                <SelectTrigger className="h-12 text-base">
+                  <SelectValue placeholder="Kunde wählen..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {customers.map(c => (
+                    <SelectItem key={c.id} value={c.id} className="text-base py-2">
+                      {getCustomerName(c)}
+                      {c.customer_number && <span className="text-muted-foreground ml-2 text-sm">({c.customer_number})</span>}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
           </div>
-          <div className="space-y-3">
-            <Label className="text-base sm:text-lg">Datum</Label>
-            <Input type="date" className="h-12 sm:h-14 text-base sm:text-lg" defaultValue="2026-03-07" />
+
+          <div className="space-y-2">
+            <Label className="text-base">Titel / Betreff *</Label>
+            <Input className="h-12 text-base" placeholder="z.B. Elektroinstallation Neubau"
+              value={title} onChange={e => setTitle(e.target.value)} />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-base">{documentType === 'quote' ? 'Angebotsdatum' : 'Rechnungsdatum'}</Label>
+            <Input type="date" className="h-12 text-base" value={date} onChange={e => setDate(e.target.value)} />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-base">{documentType === 'quote' ? 'Gültig bis' : 'Fällig am'}</Label>
+            <Input type="date" className="h-12 text-base" value={secondDate} onChange={e => setSecondDate(e.target.value)} />
           </div>
         </div>
       </Card>
 
-      {/* Items */}
-      <Card className="p-5 sm:p-8 space-y-5 sm:space-y-6">
+      {/* Positionen */}
+      <Card className="p-5 sm:p-8 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <h2 className="text-xl sm:text-2xl">Leistungspositionen</h2>
+          <h2 className="text-xl sm:text-2xl">Positionen</h2>
           <Button size="lg" onClick={addItem} className="h-12 gap-2 w-full sm:w-auto">
-            <Plus className="w-5 h-5" />
-            Position hinzufügen
+            <Plus className="w-5 h-5" />Position hinzufügen
           </Button>
         </div>
 
         <div className="space-y-4">
           {items.map((item, index) => (
             <div key={index} className="p-4 sm:p-6 bg-secondary/30 rounded-lg space-y-4">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label className="text-base">Beschreibung</Label>
-                  <Input
-                    placeholder="z.B. Elektroinstallation"
-                    className="h-12 sm:h-14 text-base sm:text-lg"
-                    value={item.description}
-                    onChange={(e) => {
-                      const newItems = [...items];
-                      newItems[index].description = e.target.value;
-                      setItems(newItems);
-                    }}
-                  />
+              {/* Vorlage */}
+              {services.length > 0 && (
+                <div className="space-y-1">
+                  <Label className="text-sm text-muted-foreground">Vorlage wählen (optional)</Label>
+                  <Select onValueChange={v => applyTemplate(index, v)}>
+                    <SelectTrigger className="h-10 text-sm">
+                      <SelectValue placeholder="Aus Leistungsbibliothek..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {services.map(s => (
+                        <SelectItem key={s.id} value={s.id} className="text-sm py-2">
+                          {s.title} — {formatCurrency(s.unit_price)} / {s.unit}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-2">
-                    <Label className="text-sm sm:text-base">Menge</Label>
-                    <Input
-                      type="number"
-                      placeholder="0"
-                      className="h-12 sm:h-14 text-base sm:text-lg"
-                      value={item.quantity}
-                      onChange={(e) => {
-                        const newItems = [...items];
-                        newItems[index].quantity = e.target.value;
-                        setItems(newItems);
-                      }}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm sm:text-base">Einheit</Label>
-                    <Select
-                      value={item.unit}
-                      onValueChange={(value) => {
-                        const newItems = [...items];
-                        newItems[index].unit = value;
-                        setItems(newItems);
-                      }}
-                    >
-                      <SelectTrigger className="h-12 sm:h-14 text-base sm:text-lg">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Stunde" className="text-base sm:text-lg">Std.</SelectItem>
-                        <SelectItem value="Stück" className="text-base sm:text-lg">Stk.</SelectItem>
-                        <SelectItem value="km" className="text-base sm:text-lg">km</SelectItem>
-                        <SelectItem value="Pauschal" className="text-base sm:text-lg">Paus.</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-sm sm:text-base">Preis €</Label>
-                    <Input
-                      type="number"
-                      placeholder="0.00"
-                      step="0.01"
-                      className="h-12 sm:h-14 text-base sm:text-lg"
-                      value={item.price}
-                      onChange={(e) => {
-                        const newItems = [...items];
-                        newItems[index].price = e.target.value;
-                        setItems(newItems);
-                      }}
-                    />
-                  </div>
-                </div>
+              )}
 
+              <div className="space-y-2">
+                <Label className="text-base">Beschreibung</Label>
+                <Input className="h-12 text-base" placeholder="z.B. Elektroinstallation"
+                  value={item.description} onChange={e => updateItem(index, 'description', e.target.value)} />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-2">
+                  <Label className="text-sm">Menge</Label>
+                  <Input type="number" className="h-12 text-base" placeholder="1"
+                    value={item.quantity} onChange={e => updateItem(index, 'quantity', e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm">Einheit</Label>
+                  <Select value={item.unit} onValueChange={v => updateItem(index, 'unit', v)}>
+                    <SelectTrigger className="h-12 text-base"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {UNITS.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-sm">Preis (€)</Label>
+                  <Input type="number" step="0.01" className="h-12 text-base" placeholder="0.00"
+                    value={item.unit_price} onChange={e => updateItem(index, 'unit_price', e.target.value)} />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Gesamt: <strong>{formatCurrency(calcItem(item))}</strong>
+                </span>
                 {items.length > 1 && (
-                  <Button
-                    variant="outline"
-                    size="lg"
-                    onClick={() => removeItem(index)}
-                    className="h-12 w-full gap-2"
-                  >
-                    <Trash2 className="w-5 h-5 text-destructive" />
-                    Löschen
+                  <Button variant="outline" size="sm" onClick={() => removeItem(index)} className="h-9 gap-2 text-destructive">
+                    <Trash2 className="w-4 h-4" />Löschen
                   </Button>
                 )}
               </div>
-
-              {/* Quick Templates */}
-              {item.description === "" && (
-                <div className="flex gap-2 flex-wrap pt-2">
-                  <span className="text-sm text-muted-foreground w-full mb-1">Vorlage wählen:</span>
-                  {serviceTemplates.map((template) => (
-                    <Button
-                      key={template.name}
-                      variant="outline"
-                      size="sm"
-                      className="text-sm"
-                      onClick={() => {
-                        const newItems = [...items];
-                        newItems[index] = {
-                          description: template.name,
-                          quantity: "1",
-                          price: template.price,
-                          unit: template.unit,
-                        };
-                        setItems(newItems);
-                      }}
-                    >
-                      {template.name}
-                    </Button>
-                  ))}
-                </div>
-              )}
             </div>
           ))}
         </div>
       </Card>
 
-      {/* Additional Info */}
-      <Card className="p-5 sm:p-8 space-y-5 sm:space-y-6">
-        <h2 className="text-xl sm:text-2xl">Zusätzliche Informationen</h2>
-        <div className="space-y-3">
-          <Label className="text-base sm:text-lg">Bemerkungen</Label>
-          <Textarea
-            placeholder="Optional: Zusätzliche Notizen oder Hinweise..."
-            className="min-h-32 text-base sm:text-lg"
-          />
-        </div>
+      {/* Notizen */}
+      <Card className="p-5 sm:p-8 space-y-4">
+        <h2 className="text-xl sm:text-2xl">Hinweise</h2>
+        <Textarea placeholder="Optionale Hinweise oder Anmerkungen..."
+          className="min-h-28 text-base" value={notes} onChange={e => setNotes(e.target.value)} />
       </Card>
 
-      {/* Summary */}
-      <Card className="p-5 sm:p-8 space-y-5 sm:space-y-6">
+      {/* Zusammenfassung */}
+      <Card className="p-5 sm:p-8 space-y-4">
         <h2 className="text-xl sm:text-2xl">Zusammenfassung</h2>
-        <div className="space-y-4">
-          <div className="flex justify-between text-lg sm:text-xl">
-            <span className="text-muted-foreground">Zwischensumme:</span>
-            <span>€{subtotal.toFixed(2)}</span>
+        <div className="max-w-sm ml-auto space-y-3">
+          <div className="flex justify-between text-base">
+            <span className="text-muted-foreground">Nettobetrag:</span>
+            <span>{formatCurrency(subtotal)}</span>
           </div>
-          <div className="flex justify-between text-lg sm:text-xl">
-            <span className="text-muted-foreground">MwSt. (19%):</span>
-            <span>€{tax.toFixed(2)}</span>
+          <div className="flex justify-between text-base">
+            <span className="text-muted-foreground">MwSt. ({vatRate}%):</span>
+            <span>{formatCurrency(vatAmount)}</span>
           </div>
           <div className="h-px bg-border" />
-          <div className="flex justify-between text-2xl sm:text-3xl font-bold">
-            <span>Gesamtsumme:</span>
-            <span className="text-primary">€{total.toFixed(2)}</span>
+          <div className="flex justify-between text-2xl font-bold">
+            <span>Gesamt:</span>
+            <span className="text-primary">{formatCurrency(total)}</span>
           </div>
         </div>
       </Card>
 
-      {/* Actions */}
+      {/* Aktionen */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Button size="lg" className="h-14 sm:h-16 text-lg sm:text-xl gap-3 order-1">
-          <Download className="w-6 h-6" />
-          PDF erstellen
+        <Button size="lg" className="h-14 text-lg gap-3" onClick={handleSave} disabled={saving}>
+          {saving
+            ? <><Loader2 className="w-5 h-5 animate-spin" />Speichern...</>
+            : <><Check className="w-5 h-5" />{documentType === 'quote' ? 'Angebot speichern' : 'Rechnung speichern'}</>}
         </Button>
-        <Button variant="outline" size="lg" className="h-14 sm:h-16 text-lg sm:text-xl order-2">
+        <Button variant="outline" size="lg" className="h-14 text-lg"
+          onClick={() => navigate(-1)} disabled={saving}>
           Abbrechen
         </Button>
       </div>

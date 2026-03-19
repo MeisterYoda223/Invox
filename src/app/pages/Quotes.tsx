@@ -1,135 +1,125 @@
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Search, FileText, ArrowRight, Plus } from "lucide-react";
+import { Search, FileText, Plus, ArrowRight, Loader2, Download } from "lucide-react";
 import { Link } from "react-router";
-
-const quotes = [
-  {
-    id: "ANG-2026-001",
-    customer: "Müller GmbH",
-    title: "Elektroinstallation Neubau",
-    amount: "€2.450",
-    date: "07.03.2026",
-    status: "Offen",
-  },
-  {
-    id: "ANG-2026-002",
-    customer: "Wagner Elektrik",
-    title: "Reparatur Schaltanlage",
-    amount: "€1.850",
-    date: "05.03.2026",
-    status: "Offen",
-  },
-  {
-    id: "ANG-2026-003",
-    customer: "Schmidt Bau",
-    title: "Beleuchtung Bürogebäude",
-    amount: "€5.600",
-    date: "03.03.2026",
-    status: "Angenommen",
-  },
-  {
-    id: "ANG-2026-004",
-    customer: "Fischer Installation",
-    title: "Verkabelung Produktionshalle",
-    amount: "€8.900",
-    date: "01.03.2026",
-    status: "Offen",
-  },
-  {
-    id: "ANG-2026-005",
-    customer: "Becker Malerei",
-    title: "Steckdosen und Schalter",
-    amount: "€890",
-    date: "28.02.2026",
-    status: "Abgelehnt",
-  },
-];
+import { useState } from "react";
+import { useQuotes, formatCurrency, formatDate, getCustomerName, getStatusLabel, getStatusColors } from "../../lib/useSupabaseData";
+import { useAuth } from "../../lib/AuthContext";
+import { exportPdf } from "../../lib/pdfExport";
 
 export function Quotes() {
+  const { company } = useAuth();
+  const { quotes, loading, error } = useQuotes();
+  const [search, setSearch] = useState('');
+  const [exporting, setExporting] = useState<string | null>(null);
+
+  const filtered = quotes.filter(q =>
+    q.title?.toLowerCase().includes(search.toLowerCase()) ||
+    q.quote_number?.toLowerCase().includes(search.toLowerCase()) ||
+    getCustomerName(q.customer).toLowerCase().includes(search.toLowerCase())
+  );
+
+  const active = filtered.filter(q => !['rejected','expired'].includes(q.status));
+
+  const handlePdf = async (quote: typeof quotes[0]) => {
+    if (!company) return;
+    setExporting(quote.id);
+    await exportPdf('quote', quote, company);
+    setExporting(null);
+  };
+
   return (
     <div className="p-4 sm:p-6 lg:p-12 space-y-6 lg:space-y-8">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl sm:text-4xl mb-2">Angebote</h1>
-          <p className="text-lg sm:text-xl text-muted-foreground">
-            Alle Ihre Angebote im Überblick
-          </p>
+          <p className="text-lg sm:text-xl text-muted-foreground">Alle Ihre Angebote im Überblick</p>
         </div>
         <Link to="/erstellen" className="w-full sm:w-auto">
-          <Button size="lg" className="h-14 px-8 text-base sm:text-lg gap-3 w-full sm:w-auto">
-            <Plus className="w-6 h-6" />
-            Neues Angebot
+          <Button size="lg" className="h-14 px-8 text-base gap-3 w-full sm:w-auto">
+            <Plus className="w-6 h-6" />Neues Angebot
           </Button>
         </Link>
       </div>
 
-      {/* Search */}
-      <Card className="p-4 sm:p-6">
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 sm:w-6 sm:h-6 text-muted-foreground" />
-          <Input
-            placeholder="Angebot suchen..."
-            className="pl-12 sm:pl-14 h-12 sm:h-14 text-base sm:text-lg"
-          />
-        </div>
-      </Card>
-
-      {/* Quotes List */}
-      <div className="space-y-4">
-        {quotes.map((quote) => (
-          <Card key={quote.id} className="p-4 sm:p-6 hover:bg-card/80 transition-colors">
-            <div className="space-y-4">
-              <div className="flex items-start gap-3 sm:gap-4">
-                <div className="p-3 sm:p-4 rounded-lg bg-blue-500/10 flex-shrink-0">
-                  <FileText className="w-6 h-6 sm:w-7 sm:h-7 text-blue-500" />
-                </div>
-                
-                <div className="flex-1 min-w-0 space-y-2">
-                  <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-                    <span className="text-base sm:text-lg text-muted-foreground">
-                      {quote.id}
-                    </span>
-                    <span
-                      className={`px-3 sm:px-4 py-1 rounded-lg text-sm sm:text-base ${
-                        quote.status === "Angenommen"
-                          ? "bg-green-500/20 text-green-400"
-                          : quote.status === "Abgelehnt"
-                          ? "bg-red-500/20 text-red-400"
-                          : "bg-blue-500/20 text-blue-400"
-                      }`}
-                    >
-                      {quote.status}
-                    </span>
-                  </div>
-                  <h3 className="text-lg sm:text-xl">{quote.title}</h3>
-                  <p className="text-base sm:text-lg text-muted-foreground">{quote.customer}</p>
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-border">
-                <div className="flex items-center justify-between sm:justify-start gap-4">
-                  <div className="text-xl sm:text-2xl font-bold">{quote.amount}</div>
-                  <div className="text-base sm:text-lg text-muted-foreground">{quote.date}</div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
-                  {quote.status === "Angenommen" && (
-                    <Button size="lg" className="h-12 px-4 sm:px-6 text-sm sm:text-base gap-2">
-                      In Rechnung umwandeln
-                      <ArrowRight className="w-4 h-4 sm:w-5 sm:h-5" />
-                    </Button>
-                  )}
-                  <Button variant="outline" size="lg" className="h-12 px-4 sm:px-6 text-sm sm:text-base">
-                    Details
-                  </Button>
-                </div>
-              </div>
-            </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {['draft','sent','accepted','rejected'].map(s => (
+          <Card key={s} className="p-4">
+            <p className="text-sm text-muted-foreground mb-1">{getStatusLabel(s)}</p>
+            <p className="text-2xl font-bold">{quotes.filter(q => q.status === s).length}</p>
           </Card>
         ))}
       </div>
+
+      <Card className="p-4 sm:p-6">
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+          <Input placeholder="Angebot suchen..." className="pl-12 h-12 text-base"
+            value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+      </Card>
+
+      {loading ? (
+        <div className="flex items-center gap-3 text-muted-foreground py-8">
+          <Loader2 className="w-6 h-6 animate-spin" /><span>Lade Angebote...</span>
+        </div>
+      ) : error ? (
+        <Card className="p-6 text-red-400">Fehler: {error}</Card>
+      ) : active.length === 0 ? (
+        <Card className="p-8 text-center text-muted-foreground">
+          {search ? 'Keine Angebote gefunden.' : 'Noch keine Angebote vorhanden. Erstellen Sie Ihr erstes Angebot!'}
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          {active.map(quote => (
+            <Card key={quote.id} className="p-4 sm:p-6 hover:bg-card/80 transition-colors">
+              <div className="space-y-4">
+                <div className="flex items-start gap-4">
+                  <div className="p-3 rounded-lg bg-blue-500/10 flex-shrink-0">
+                    <FileText className="w-6 h-6 text-blue-500" />
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm text-muted-foreground">{quote.quote_number}</span>
+                      <span className={`px-2 py-0.5 rounded text-xs ${getStatusColors(quote.status)}`}>
+                        {getStatusLabel(quote.status)}
+                      </span>
+                    </div>
+                    <h3 className="text-lg sm:text-xl">{quote.title}</h3>
+                    <p className="text-base text-muted-foreground">{getCustomerName(quote.customer)}</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2 border-t border-border">
+                  <div className="flex items-center gap-4">
+                    <span className="text-xl font-bold">{formatCurrency(quote.total)}</span>
+                    <span className="text-sm text-muted-foreground">{formatDate(quote.quote_date)}</span>
+                    {quote.valid_until && (
+                      <span className="text-sm text-muted-foreground">Bis: {formatDate(quote.valid_until)}</span>
+                    )}
+                  </div>
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    <Button variant="outline" size="sm" className="h-10 gap-2 flex-1 sm:flex-initial"
+                      onClick={() => handlePdf(quote)} disabled={exporting === quote.id}>
+                      {exporting === quote.id
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <Download className="w-4 h-4" />}
+                      PDF
+                    </Button>
+                    {quote.status === 'accepted' && (
+                      <Button size="sm" className="h-10 gap-2 flex-1 sm:flex-initial">
+                        Rechnung erstellen<ArrowRight className="w-4 h-4" />
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" className="h-10 flex-1 sm:flex-initial">Details</Button>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

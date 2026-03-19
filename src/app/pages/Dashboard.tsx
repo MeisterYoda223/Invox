@@ -1,207 +1,127 @@
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { FileText, Receipt, Clock, CheckCircle, AlertCircle } from "lucide-react";
+import { FileText, Receipt, AlertCircle, CheckCircle, Loader2 } from "lucide-react";
 import { Link } from "react-router";
+import { useQuotes, useInvoices, formatCurrency, formatDate, getCustomerName, getStatusLabel, getStatusColors } from "../../lib/useSupabaseData";
+import { useAuth } from '../../lib/AuthContext';
 
-const stats = [
-  {
-    title: "Offene Angebote",
-    value: "12",
-    icon: FileText,
-    color: "text-blue-500",
-    bgColor: "bg-blue-500/10",
-  },
-  {
-    title: "Offene Rechnungen",
-    value: "8",
-    icon: Receipt,
-    color: "text-green-500",
-    bgColor: "bg-green-500/10",
-  },
-  {
-    title: "Überfällig",
-    value: "2",
-    icon: AlertCircle,
-    color: "text-red-500",
-    bgColor: "bg-red-500/10",
-  },
-  {
-    title: "Diese Woche",
-    value: "€12.450",
-    icon: CheckCircle,
-    color: "text-primary",
-    bgColor: "bg-primary/10",
-  },
-];
-
-const recentActivities = [
-  {
-    type: "Angebot",
-    customer: "Müller GmbH",
-    amount: "€2.450",
-    date: "07.03.2026",
-    status: "Offen",
-  },
-  {
-    type: "Rechnung",
-    customer: "Schmidt Bau",
-    amount: "€5.200",
-    date: "06.03.2026",
-    status: "Bezahlt",
-  },
-  {
-    type: "Angebot",
-    customer: "Wagner Elektrik",
-    amount: "€1.850",
-    date: "05.03.2026",
-    status: "Offen",
-  },
-  {
-    type: "Rechnung",
-    customer: "Fischer Installation",
-    amount: "€3.400",
-    date: "04.03.2026",
-    status: "Offen",
-  },
-  {
-    type: "Rechnung",
-    customer: "Becker Malerei",
-    amount: "€890",
-    date: "03.03.2026",
-    status: "Überfällig",
-  },
-];
 
 export function Dashboard() {
+  const { userProfile, company } = useAuth();
+  const { quotes, loading: qLoading } = useQuotes();
+  const { invoices, loading: iLoading } = useInvoices();
+
+  const loading = qLoading || iLoading;
+
+  const openQuotes = quotes.filter(q => ['draft','sent'].includes(q.status));
+  const openInvoices = invoices.filter(i => ['sent','draft'].includes(i.status));
+  const overdueInvoices = invoices.filter(i => i.status === 'overdue');
+  const paidThisMonth = invoices
+    .filter(i => i.status === 'paid' && i.paid_date?.startsWith(new Date().toISOString().slice(0,7)))
+    .reduce((sum, i) => sum + Number(i.total), 0);
+
+  const recent = [
+    ...quotes.slice(0, 3).map(q => ({ ...q, type: 'Angebot' as const })),
+    ...invoices.slice(0, 3).map(i => ({ ...i, type: 'Rechnung' as const })),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 6);
+
   return (
     <div className="p-4 sm:p-6 lg:p-12 space-y-6 lg:space-y-8">
       <div>
-        <h1 className="text-3xl sm:text-4xl mb-2">Dashboard</h1>
+        <h1 className="text-3xl sm:text-4xl mb-2">
+          Willkommen{userProfile?.name ? `, ${userProfile.name}` : ''}
+        </h1>
         <p className="text-lg sm:text-xl text-muted-foreground">
-          Übersicht Ihrer Angebote und Rechnungen
+          {company?.company_name ?? 'Übersicht Ihrer Angebote und Rechnungen'}
         </p>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
-        {stats.map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <Card key={stat.title} className="p-5 sm:p-6 space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-base sm:text-lg text-muted-foreground">
-                  {stat.title}
-                </span>
-                <div className={`p-3 rounded-lg ${stat.bgColor}`}>
-                  <Icon className={`w-6 h-6 ${stat.color}`} />
-                </div>
-              </div>
-              <div className="text-3xl font-bold">{stat.value}</div>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Recent Activities */}
-      <Card className="p-5 sm:p-8">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-          <h2 className="text-xl sm:text-2xl">Letzte Aktivitäten</h2>
-          <Link to="/archiv">
-            <Button variant="outline" size="lg" className="w-full sm:w-auto">
-              Alle anzeigen
-            </Button>
-          </Link>
+      {loading ? (
+        <div className="flex items-center gap-3 text-muted-foreground py-8">
+          <Loader2 className="w-6 h-6 animate-spin" />
+          <span>Lade Daten...</span>
         </div>
-
-        <div className="space-y-3 sm:space-y-4">
-          {recentActivities.map((activity, index) => (
-            <div
-              key={index}
-              className="flex flex-col sm:flex-row sm:items-center justify-between p-4 sm:p-5 bg-secondary/50 rounded-lg hover:bg-secondary transition-colors gap-3 sm:gap-6"
-            >
-              <div className="flex items-center gap-3 sm:gap-4">
-                {activity.type === "Angebot" ? (
-                  <FileText className="w-6 h-6 sm:w-7 sm:h-7 text-blue-500 flex-shrink-0" />
-                ) : (
-                  <Receipt className="w-6 h-6 sm:w-7 sm:h-7 text-green-500 flex-shrink-0" />
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-base sm:text-lg font-medium">{activity.type}</span>
-                    <span
-                      className={`px-3 py-1 rounded-lg text-sm ${
-                        activity.status === "Bezahlt"
-                          ? "bg-green-500/20 text-green-400"
-                          : activity.status === "Überfällig"
-                          ? "bg-red-500/20 text-red-400"
-                          : "bg-blue-500/20 text-blue-400"
-                      }`}
-                    >
-                      {activity.status}
-                    </span>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-6">
+            {[
+              { title: 'Offene Angebote', value: openQuotes.length, icon: FileText, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+              { title: 'Offene Rechnungen', value: openInvoices.length, icon: Receipt, color: 'text-green-500', bg: 'bg-green-500/10' },
+              { title: 'Überfällig', value: overdueInvoices.length, icon: AlertCircle, color: 'text-red-500', bg: 'bg-red-500/10' },
+              { title: 'Bezahlt diesen Monat', value: formatCurrency(paidThisMonth), icon: CheckCircle, color: 'text-primary', bg: 'bg-primary/10' },
+            ].map(stat => (
+              <Card key={stat.title} className="p-5 sm:p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm sm:text-base text-muted-foreground">{stat.title}</span>
+                  <div className={`p-3 rounded-lg ${stat.bg}`}>
+                    <stat.icon className={`w-5 h-5 ${stat.color}`} />
                   </div>
-                  <p className="text-base sm:text-lg text-muted-foreground truncate">
-                    {activity.customer}
-                  </p>
                 </div>
-              </div>
-              <div className="flex items-center justify-between sm:justify-end gap-4 sm:gap-6">
-                <div className="text-lg sm:text-xl font-semibold">
-                  {activity.amount}
-                </div>
-                <div className="text-base sm:text-lg text-muted-foreground">
-                  {activity.date}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
+                <div className="text-2xl sm:text-3xl font-bold">{stat.value}</div>
+              </Card>
+            ))}
+          </div>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-        <Link to="/erstellen">
-          <Card className="p-6 sm:p-8 hover:bg-card/80 transition-colors cursor-pointer h-full">
-            <div className="flex flex-col items-center text-center gap-4">
-              <div className="p-4 rounded-lg bg-primary/10">
-                <FileText className="w-8 h-8 text-primary" />
-              </div>
-              <h3 className="text-xl">Neues Angebot</h3>
-              <p className="text-muted-foreground text-base sm:text-lg">
-                Schnell ein neues Angebot erstellen
-              </p>
+          <Card className="p-5 sm:p-8">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+              <h2 className="text-xl sm:text-2xl">Letzte Aktivitäten</h2>
+              <Link to="/archiv">
+                <Button variant="outline" size="lg" className="w-full sm:w-auto">Alle anzeigen</Button>
+              </Link>
             </div>
+            {recent.length === 0 ? (
+              <p className="text-muted-foreground text-center py-8">Noch keine Aktivitäten vorhanden.</p>
+            ) : (
+              <div className="space-y-3">
+                {recent.map(item => (
+                  <div key={item.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-secondary/50 rounded-lg gap-3">
+                    <div className="flex items-center gap-3">
+                      {item.type === 'Angebot'
+                        ? <FileText className="w-6 h-6 text-blue-500 flex-shrink-0" />
+                        : <Receipt className="w-6 h-6 text-green-500 flex-shrink-0" />}
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium">{item.type}</span>
+                          <span className={`px-2 py-0.5 rounded text-xs ${getStatusColors(item.status)}`}>
+                            {getStatusLabel(item.status)}
+                          </span>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {getCustomerName(item.customer)} — {item.title}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className="font-semibold">{formatCurrency(item.total)}</span>
+                      <span className="text-muted-foreground">{formatDate(item.created_at)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
-        </Link>
 
-        <Link to="/erstellen">
-          <Card className="p-6 sm:p-8 hover:bg-card/80 transition-colors cursor-pointer h-full">
-            <div className="flex flex-col items-center text-center gap-4">
-              <div className="p-4 rounded-lg bg-primary/10">
-                <Receipt className="w-8 h-8 text-primary" />
-              </div>
-              <h3 className="text-xl">Neue Rechnung</h3>
-              <p className="text-muted-foreground text-base sm:text-lg">
-                Schnell eine neue Rechnung erstellen
-              </p>
-            </div>
-          </Card>
-        </Link>
-
-        <Link to="/kunden">
-          <Card className="p-6 sm:p-8 hover:bg-card/80 transition-colors cursor-pointer h-full sm:col-span-2 lg:col-span-1">
-            <div className="flex flex-col items-center text-center gap-4">
-              <div className="p-4 rounded-lg bg-primary/10">
-                <Clock className="w-8 h-8 text-primary" />
-              </div>
-              <h3 className="text-xl">Kundenverwaltung</h3>
-              <p className="text-muted-foreground text-base sm:text-lg">
-                Kunden anzeigen und verwalten
-              </p>
-            </div>
-          </Card>
-        </Link>
-      </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+            {[
+              { to: '/erstellen', icon: FileText, title: 'Neues Angebot', desc: 'Schnell ein neues Angebot erstellen' },
+              { to: '/erstellen', icon: Receipt, title: 'Neue Rechnung', desc: 'Schnell eine neue Rechnung erstellen' },
+              { to: '/kunden', icon: CheckCircle, title: 'Kunden', desc: 'Kunden anzeigen und verwalten' },
+            ].map(action => (
+              <Link key={action.title} to={action.to}>
+                <Card className="p-6 sm:p-8 hover:bg-card/80 transition-colors cursor-pointer h-full">
+                  <div className="flex flex-col items-center text-center gap-4">
+                    <div className="p-4 rounded-lg bg-primary/10">
+                      <action.icon className="w-8 h-8 text-primary" />
+                    </div>
+                    <h3 className="text-xl">{action.title}</h3>
+                    <p className="text-muted-foreground text-base">{action.desc}</p>
+                  </div>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
