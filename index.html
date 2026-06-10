@@ -1,9 +1,41 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="de">
     <head>
         <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
         <title>Invox</title>
+        <style>
+            :root {
+                --safe-top: env(safe-area-inset-top, 0px);
+                --safe-right: env(safe-area-inset-right, 0px);
+                --safe-bottom: env(safe-area-inset-bottom, 0px);
+                --safe-left: env(safe-area-inset-left, 0px);
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            html {
+                height: 100%;
+                /* viewport-fit=cover alleine reicht nicht — auch hier setzen */
+                padding-top: env(safe-area-inset-top, 0px);
+                padding-right: env(safe-area-inset-right, 0px);
+                padding-bottom: env(safe-area-inset-bottom, 0px);
+                padding-left: env(safe-area-inset-left, 0px);
+                background-color: #09090b;
+            }
+
+            body {
+                margin: 0;
+                height: 100%;
+                background-color: #09090b;
+            }
+
+            #root {
+                height: 100%;
+            }
+        </style>
     </head>
     <body>
         <div id="root"></div>

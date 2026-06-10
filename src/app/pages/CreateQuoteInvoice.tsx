@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -11,64 +11,111 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { Plus, Trash2, FileText, Receipt, Loader2, Check } from "lucide-react";
+import { Plus, Trash2, FileText, Receipt, Loader2, Check, Send } from "lucide-react";
 import { useAuth } from "../../lib/AuthContext";
 import { useCustomers, useServices, formatCurrency, getCustomerName } from "../../lib/useSupabaseData";
 import { supabase } from "../../lib/supabase";
 import { toast } from "sonner";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 
 interface LineItem {
   description: string;
   quantity: string;
   unit: string;
   unit_price: string;
+  // FIX: MwSt. pro Position — nur 0, 7, 19 %
+  vat_rate: string;
 }
 
 const UNITS = ['Stunde', 'Stück', 'km', 'Pauschal', 'm', 'm²', 'm³'];
+// FIX: Nur erlaubte MwSt.-Sätze
+const VAT_RATES = ['0', '7', '19'];
 
 export function CreateQuoteInvoice() {
   const { userProfile, company } = useAuth();
   const { customers, loading: customersLoading } = useCustomers();
   const { services } = useServices();
   const navigate = useNavigate();
+  // FIX: URL-Parameter für den Dokumenttyp auslesen
+  const [searchParams] = useSearchParams();
 
-  const [documentType, setDocumentType] = useState<'quote' | 'invoice'>('quote');
+  const [documentType, setDocumentType] = useState<'quote' | 'invoice'>(() => {
+    const typeParam = searchParams.get('type');
+    return typeParam === 'invoice' ? 'invoice' : 'quote';
+  });
+
+  // FIX: URL-Parameter verfolgen wenn sich die URL ändert
+  useEffect(() => {
+    const typeParam = searchParams.get('type');
+    if (typeParam === 'invoice' || typeParam === 'quote') {
+      setDocumentType(typeParam);
+    }
+  }, [searchParams]);
+
+  const defaultVatRate = String(company?.default_vat_rate ?? 19);
+  // Nur 0, 7, 19 erlaubt — Fallback auf 19 falls DB-Wert anders ist
+  const safeDefaultVat = VAT_RATES.includes(defaultVatRate) ? defaultVatRate : '19';
+
   const [customerId, setCustomerId] = useState('');
   const [title, setTitle] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [secondDate, setSecondDate] = useState(''); // valid_until or due_date
+  const [secondDate, setSecondDate] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
   const [items, setItems] = useState<LineItem[]>([
-    { description: '', quantity: '1', unit: 'Stunde', unit_price: '' },
+    { description: '', quantity: '1', unit: 'Stunde', unit_price: '', vat_rate: safeDefaultVat },
   ]);
 
   const updateItem = (index: number, field: keyof LineItem, value: string) => {
     setItems(prev => prev.map((item, i) => i === index ? { ...item, [field]: value } : item));
   };
 
-  const addItem = () => setItems(prev => [...prev, { description: '', quantity: '1', unit: 'Stunde', unit_price: '' }]);
+  const addItem = () => setItems(prev => [
+    ...prev,
+    { description: '', quantity: '1', unit: 'Stunde', unit_price: '', vat_rate: safeDefaultVat },
+  ]);
+
   const removeItem = (index: number) => setItems(prev => prev.filter((_, i) => i !== index));
 
   const applyTemplate = (index: number, serviceId: string) => {
     const service = services.find(s => s.id === serviceId);
     if (!service) return;
+    const serviceVat = String(service.vat_rate ?? safeDefaultVat);
+    const safeVat = VAT_RATES.includes(serviceVat) ? serviceVat : safeDefaultVat;
     updateItem(index, 'description', service.title);
     updateItem(index, 'unit', service.unit);
     updateItem(index, 'unit_price', String(service.unit_price));
+    updateItem(index, 'vat_rate', safeVat);
   };
 
-  const calcItem = (item: LineItem) =>
+  const calcItemNet = (item: LineItem) =>
     (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0);
 
-  const vatRate = company?.default_vat_rate ? Number(company.default_vat_rate) : 19;
-  const subtotal = items.reduce((sum, item) => sum + calcItem(item), 0);
-  const vatAmount = subtotal * (vatRate / 100);
+  const calcItemVat = (item: LineItem) =>
+    calcItemNet(item) * ((parseFloat(item.vat_rate) || 0) / 100);
+
+  // FIX: Zusammenfassung berechnet MwSt. pro Position (kann gemischt 7%/19% sein)
+  const subtotal = items.reduce((sum, item) => sum + calcItemNet(item), 0);
+  const vatAmount = items.reduce((sum, item) => sum + calcItemVat(item), 0);
   const total = subtotal + vatAmount;
 
-  const handleSave = async () => {
+  // Gruppierte MwSt. für Zusammenfassung (z.B. 7% + 19% separat ausweisen)
+  const vatBreakdown = VAT_RATES.filter(rate => rate !== '0').map(rate => {
+    const amount = items
+      .filter(i => i.vat_rate === rate)
+      .reduce((sum, i) => sum + calcItemVat(i), 0);
+    return { rate, amount };
+  }).filter(v => v.amount > 0);
+
+  // Nummern-Format hochzählen: "RE-2026-001" → "RE-2026-002"
+  const incrementNumber = (current: string): string => {
+    const match = current.match(/^(.*?)(\d+)$/);
+    if (!match) return current;
+    return `${match[1]}${String(parseInt(match[2]) + 1).padStart(match[2].length, '0')}`;
+  };
+
+  const handleSave = async (status: 'draft' | 'sent') => {
     if (!customerId) { toast.error('Bitte wählen Sie einen Kunden.'); return; }
     if (!title.trim()) { toast.error('Bitte geben Sie einen Titel ein.'); return; }
     if (items.every(i => !i.description)) { toast.error('Bitte fügen Sie mindestens eine Position hinzu.'); return; }
@@ -76,6 +123,14 @@ export function CreateQuoteInvoice() {
 
     setSaving(true);
     try {
+      // Aktuelle Nummern frisch aus DB holen — nie den Cache verwenden
+      const { data: freshCompany, error: companyErr } = await supabase
+        .from('companies')
+        .select('next_quote_number, next_invoice_number, payment_terms')
+        .eq('id', userProfile.company_id)
+        .single();
+      if (companyErr) throw companyErr;
+
       const dbItems = items
         .filter(i => i.description)
         .map(i => ({
@@ -83,17 +138,26 @@ export function CreateQuoteInvoice() {
           quantity: parseFloat(i.quantity) || 0,
           unit: i.unit,
           unit_price: parseFloat(i.unit_price) || 0,
-          total: calcItem(i),
+          vat_rate: parseFloat(i.vat_rate) || 0,
+          total: calcItemNet(i),
         }));
 
       if (documentType === 'quote') {
+        const quoteNumber = freshCompany.next_quote_number ?? `ANG-${Date.now()}`;
+        const nextQuoteNumber = incrementNumber(quoteNumber);
+
+        // Nummer zuerst hochzählen, dann Insert
+        await supabase.from('companies')
+          .update({ next_quote_number: nextQuoteNumber })
+          .eq('id', userProfile.company_id);
+
         const { error } = await supabase.from('quotes').insert({
           company_id: userProfile.company_id,
           customer_id: customerId,
           created_by: userProfile.id,
-          quote_number: company?.next_quote_number ?? `ANG-${Date.now()}`,
+          quote_number: quoteNumber,
           title: title.trim(),
-          status: 'draft',
+          status,
           subtotal,
           vat_amount: vatAmount,
           total,
@@ -102,18 +166,33 @@ export function CreateQuoteInvoice() {
           items: dbItems,
           notes: notes || null,
         });
-        if (error) throw error;
-        toast.success('Angebot wurde gespeichert!');
+        if (error) {
+          // Rollback
+          await supabase.from('companies')
+            .update({ next_quote_number: quoteNumber })
+            .eq('id', userProfile.company_id);
+          throw error;
+        }
+        toast.success(status === 'sent' ? 'Angebot wurde versendet!' : 'Angebot als Entwurf gespeichert!');
+
       } else {
-        const paymentTerms = company?.payment_terms ?? 14;
+        const invoiceNumber = freshCompany.next_invoice_number ?? `RE-${Date.now()}`;
+        const nextInvoiceNumber = incrementNumber(invoiceNumber);
+        const paymentTerms = freshCompany.payment_terms ?? 14;
         const dueDate = secondDate || new Date(new Date(date).getTime() + paymentTerms * 86400000).toISOString().slice(0, 10);
+
+        // Nummer zuerst hochzählen, dann Insert
+        await supabase.from('companies')
+          .update({ next_invoice_number: nextInvoiceNumber })
+          .eq('id', userProfile.company_id);
+
         const { error } = await supabase.from('invoices').insert({
           company_id: userProfile.company_id,
           customer_id: customerId,
           created_by: userProfile.id,
-          invoice_number: company?.next_invoice_number ?? `RE-${Date.now()}`,
+          invoice_number: invoiceNumber,
           title: title.trim(),
-          status: 'draft',
+          status,
           subtotal,
           vat_amount: vatAmount,
           total,
@@ -122,8 +201,14 @@ export function CreateQuoteInvoice() {
           items: dbItems,
           notes: notes || null,
         });
-        if (error) throw error;
-        toast.success('Rechnung wurde gespeichert!');
+        if (error) {
+          // Rollback
+          await supabase.from('companies')
+            .update({ next_invoice_number: invoiceNumber })
+            .eq('id', userProfile.company_id);
+          throw error;
+        }
+        toast.success(status === 'sent' ? 'Rechnung wurde versendet!' : 'Rechnung als Entwurf gespeichert!');
       }
 
       navigate(documentType === 'quote' ? '/angebote' : '/rechnungen');
@@ -245,7 +330,8 @@ export function CreateQuoteInvoice() {
                   value={item.description} onChange={e => updateItem(index, 'description', e.target.value)} />
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              {/* FIX: 4 Spalten — Menge, Einheit, Preis, MwSt. */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="space-y-2">
                   <Label className="text-sm">Menge</Label>
                   <Input type="number" className="h-12 text-base" placeholder="1"
@@ -265,11 +351,28 @@ export function CreateQuoteInvoice() {
                   <Input type="number" step="0.01" className="h-12 text-base" placeholder="0.00"
                     value={item.unit_price} onChange={e => updateItem(index, 'unit_price', e.target.value)} />
                 </div>
+                {/* FIX: MwSt.-Dropdown nur 0%, 7%, 19% */}
+                <div className="space-y-2">
+                  <Label className="text-sm">MwSt.</Label>
+                  <Select value={item.vat_rate} onValueChange={v => updateItem(index, 'vat_rate', v)}>
+                    <SelectTrigger className="h-12 text-base"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {VAT_RATES.map(r => (
+                        <SelectItem key={r} value={r}>{r} %</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
-                  Gesamt: <strong>{formatCurrency(calcItem(item))}</strong>
+                  Netto: <strong>{formatCurrency(calcItemNet(item))}</strong>
+                  {parseFloat(item.vat_rate) > 0 && (
+                    <span className="ml-2 text-muted-foreground">
+                      (Brutto: {formatCurrency(calcItemNet(item) + calcItemVat(item))})
+                    </span>
+                  )}
                 </span>
                 {items.length > 1 && (
                   <Button variant="outline" size="sm" onClick={() => removeItem(index)} className="h-9 gap-2 text-destructive">
@@ -297,10 +400,20 @@ export function CreateQuoteInvoice() {
             <span className="text-muted-foreground">Nettobetrag:</span>
             <span>{formatCurrency(subtotal)}</span>
           </div>
-          <div className="flex justify-between text-base">
-            <span className="text-muted-foreground">MwSt. ({vatRate}%):</span>
-            <span>{formatCurrency(vatAmount)}</span>
-          </div>
+          {/* FIX: MwSt. aufgeschlüsselt nach Satz */}
+          {vatBreakdown.length > 0 ? (
+            vatBreakdown.map(v => (
+              <div key={v.rate} className="flex justify-between text-base">
+                <span className="text-muted-foreground">MwSt. ({v.rate}%):</span>
+                <span>{formatCurrency(v.amount)}</span>
+              </div>
+            ))
+          ) : (
+            <div className="flex justify-between text-base">
+              <span className="text-muted-foreground">MwSt.:</span>
+              <span>{formatCurrency(0)}</span>
+            </div>
+          )}
           <div className="h-px bg-border" />
           <div className="flex justify-between text-2xl font-bold">
             <span>Gesamt:</span>
@@ -309,15 +422,38 @@ export function CreateQuoteInvoice() {
         </div>
       </Card>
 
-      {/* Aktionen */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Button size="lg" className="h-14 text-lg gap-3" onClick={handleSave} disabled={saving}>
+      {/* FIX: Zwei Speicher-Buttons — Entwurf und Direkt versenden */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Button
+          size="lg"
+          variant="outline"
+          className="h-14 text-base gap-2"
+          onClick={() => handleSave('draft')}
+          disabled={saving}
+        >
           {saving
-            ? <><Loader2 className="w-5 h-5 animate-spin" />Speichern...</>
-            : <><Check className="w-5 h-5" />{documentType === 'quote' ? 'Angebot speichern' : 'Rechnung speichern'}</>}
+            ? <Loader2 className="w-5 h-5 animate-spin" />
+            : <Check className="w-5 h-5" />}
+          Als Entwurf speichern
         </Button>
-        <Button variant="outline" size="lg" className="h-14 text-lg"
-          onClick={() => navigate(-1)} disabled={saving}>
+        <Button
+          size="lg"
+          className="h-14 text-base gap-2"
+          onClick={() => handleSave('sent')}
+          disabled={saving}
+        >
+          {saving
+            ? <Loader2 className="w-5 h-5 animate-spin" />
+            : <Send className="w-5 h-5" />}
+          {documentType === 'quote' ? 'Angebot versenden' : 'Rechnung versenden'}
+        </Button>
+        <Button
+          variant="outline"
+          size="lg"
+          className="h-14 text-base"
+          onClick={() => navigate(-1)}
+          disabled={saving}
+        >
           Abbrechen
         </Button>
       </div>

@@ -2,7 +2,7 @@ import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Search, Users, Plus, Mail, Phone, MapPin, Loader2 } from "lucide-react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { useState } from "react";
 import { useCustomers, useQuotes, useInvoices, formatCurrency, getCustomerName } from "../../lib/useSupabaseData";
 
@@ -11,6 +11,7 @@ export function Customers() {
   const { quotes } = useQuotes();
   const { invoices } = useInvoices();
   const [search, setSearch] = useState('');
+  const navigate = useNavigate();
 
   const filtered = customers.filter(c =>
     getCustomerName(c).toLowerCase().includes(search.toLowerCase()) ||
@@ -123,9 +124,24 @@ export function Customers() {
                       </div>
                     </div>
                   </div>
+                  {/* FIX: Buttons navigieren jetzt zu den korrekten Routen */}
                   <div className="flex gap-2 pt-2 border-t border-border">
-                    <Button variant="default" size="sm" className="h-10 flex-1">Details</Button>
-                    <Button variant="outline" size="sm" className="h-10 flex-1">Bearbeiten</Button>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-10 flex-1"
+                      onClick={() => navigate(`/kunden/${customer.id}`)}
+                    >
+                      Details
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-10 flex-1"
+                      onClick={() => navigate(`/kunden/${customer.id}/bearbeiten`)}
+                    >
+                      Bearbeiten
+                    </Button>
                   </div>
                 </div>
               </Card>

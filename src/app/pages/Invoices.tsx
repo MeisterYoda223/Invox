@@ -2,7 +2,7 @@ import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Search, Receipt, Plus, Download, Loader2 } from "lucide-react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { useState } from "react";
 import { useInvoices, formatCurrency, formatDate, getCustomerName, getStatusLabel, getStatusColors } from "../../lib/useSupabaseData";
 import { useAuth } from "../../lib/AuthContext";
@@ -13,6 +13,7 @@ export function Invoices() {
   const { invoices, loading, error } = useInvoices();
   const [search, setSearch] = useState('');
   const [exporting, setExporting] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const filtered = invoices.filter(i =>
     i.title?.toLowerCase().includes(search.toLowerCase()) ||
@@ -20,12 +21,13 @@ export function Invoices() {
     getCustomerName(i.customer).toLowerCase().includes(search.toLowerCase())
   );
 
+  // FIX: 'draft' aus der aktiven Ansicht nicht herausfiltern — sie sind aktiv und müssen bearbeitbar sein
   const active = filtered.filter(i => i.status !== 'cancelled');
 
-  const openTotal = invoices.filter(i => ['sent','draft'].includes(i.status)).reduce((s,i) => s + Number(i.total), 0);
-  const overdueTotal = invoices.filter(i => i.status === 'overdue').reduce((s,i) => s + Number(i.total), 0);
-  const monthStr = new Date().toISOString().slice(0,7);
-  const monthTotal = invoices.filter(i => i.status === 'paid' && i.paid_date?.startsWith(monthStr)).reduce((s,i) => s + Number(i.total), 0);
+  const openTotal = invoices.filter(i => ['sent', 'draft'].includes(i.status)).reduce((s, i) => s + Number(i.total), 0);
+  const overdueTotal = invoices.filter(i => i.status === 'overdue').reduce((s, i) => s + Number(i.total), 0);
+  const monthStr = new Date().toISOString().slice(0, 7);
+  const monthTotal = invoices.filter(i => i.status === 'paid' && i.paid_date?.startsWith(monthStr)).reduce((s, i) => s + Number(i.total), 0);
 
   const handlePdf = async (invoice: typeof invoices[0]) => {
     if (!company) return;
@@ -41,23 +43,32 @@ export function Invoices() {
           <h1 className="text-3xl sm:text-4xl mb-2">Rechnungen</h1>
           <p className="text-lg sm:text-xl text-muted-foreground">Alle Rechnungen im Überblick</p>
         </div>
-        <Link to="/erstellen" className="w-full sm:w-auto">
+        <Link to="/erstellen?type=invoice" className="w-full sm:w-auto">
           <Button size="lg" className="h-14 px-8 text-base gap-3 w-full sm:w-auto">
             <Plus className="w-6 h-6" />Neue Rechnung
           </Button>
         </Link>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="p-5"><p className="text-sm text-muted-foreground mb-1">Offen</p>
-          <p className="text-2xl font-bold">{invoices.filter(i => ['sent','draft'].includes(i.status)).length}</p>
-          <p className="text-sm text-muted-foreground">{formatCurrency(openTotal)}</p>
+      {/* FIX: Stat-Cards zeigen jetzt 'draft' und 'sent' getrennt an */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <Card className="p-5">
+          <p className="text-sm text-muted-foreground mb-1">Entwürfe</p>
+          <p className="text-2xl font-bold">{invoices.filter(i => i.status === 'draft').length}</p>
+          <p className="text-sm text-muted-foreground">{formatCurrency(invoices.filter(i => i.status === 'draft').reduce((s, i) => s + Number(i.total), 0))}</p>
         </Card>
-        <Card className="p-5"><p className="text-sm text-muted-foreground mb-1">Überfällig</p>
+        <Card className="p-5">
+          <p className="text-sm text-muted-foreground mb-1">Versendet</p>
+          <p className="text-2xl font-bold">{invoices.filter(i => i.status === 'sent').length}</p>
+          <p className="text-sm text-muted-foreground">{formatCurrency(invoices.filter(i => i.status === 'sent').reduce((s, i) => s + Number(i.total), 0))}</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-sm text-muted-foreground mb-1">Überfällig</p>
           <p className="text-2xl font-bold text-red-500">{invoices.filter(i => i.status === 'overdue').length}</p>
           <p className="text-sm text-muted-foreground">{formatCurrency(overdueTotal)}</p>
         </Card>
-        <Card className="p-5"><p className="text-sm text-muted-foreground mb-1">Bezahlt diesen Monat</p>
+        <Card className="p-5">
+          <p className="text-sm text-muted-foreground mb-1">Bezahlt diesen Monat</p>
           <p className="text-2xl font-bold text-green-500">{formatCurrency(monthTotal)}</p>
           <p className="text-sm text-muted-foreground">{invoices.filter(i => i.status === 'paid' && i.paid_date?.startsWith(monthStr)).length} Rechnungen</p>
         </Card>
@@ -123,7 +134,15 @@ export function Invoices() {
                         : <Download className="w-4 h-4" />}
                       PDF
                     </Button>
-                    <Button variant="outline" size="sm" className="h-10 flex-1 sm:flex-initial">Details</Button>
+                    {/* FIX: Details-Button navigiert jetzt zur Detailseite */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-10 flex-1 sm:flex-initial"
+                      onClick={() => navigate(`/rechnungen/${invoice.id}`)}
+                    >
+                      Details
+                    </Button>
                   </div>
                 </div>
               </div>

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { useParams, useNavigate } from "react-router";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -9,30 +9,53 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
 import { ArrowLeft, Loader2, Check } from "lucide-react";
-import { useAuth } from "../../lib/AuthContext";
 import { supabase } from "../../lib/supabase";
 import { toast } from "sonner";
 
 const UNITS = ['Stunde', 'Stück', 'km', 'Pauschal', 'm', 'm²', 'm³'];
-// FIX: Nur erlaubte MwSt.-Sätze
 const VAT_RATES = ['0', '7', '19'];
 
-export function CreateService() {
-  const { userProfile, company } = useAuth();
+export function EditService() {
+  const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
-  // FIX: Sicherstellen dass der Default-Wert aus der DB auch erlaubt ist
-  const rawDefault = String(company?.default_vat_rate ?? 19);
-  const safeDefault = VAT_RATES.includes(rawDefault) ? rawDefault : '19';
 
   const [form, setForm] = useState({
     title: '',
     description: '',
     unit: 'Stunde',
     unit_price: '',
-    vat_rate: safeDefault,
+    vat_rate: '19',
   });
+
+  useEffect(() => {
+    const load = async () => {
+      if (!id) return;
+      const { data, error } = await supabase
+        .from('services')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        toast.error('Leistung nicht gefunden');
+        navigate('/leistungen');
+        return;
+      }
+
+      const rawVat = String(data.vat_rate ?? 19);
+      setForm({
+        title: data.title ?? '',
+        description: data.description ?? '',
+        unit: data.unit ?? 'Stunde',
+        unit_price: String(data.unit_price ?? ''),
+        vat_rate: VAT_RATES.includes(rawVat) ? rawVat : '19',
+      });
+      setLoading(false);
+    };
+    load();
+  }, [id]);
 
   const set = (field: keyof typeof form) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
@@ -47,27 +70,20 @@ export function CreateService() {
       toast.error('Bitte geben Sie einen gültigen Preis ein.');
       return;
     }
-    if (!userProfile?.company_id) return;
+    if (!id) return;
 
     setSaving(true);
     try {
-      const { count } = await supabase
+      const { error } = await supabase
         .from('services')
-        .select('*', { count: 'exact', head: true })
-        .eq('company_id', userProfile.company_id);
-
-      const serviceNumber = `LS-${String((count ?? 0) + 1).padStart(4, '0')}`;
-
-      const { error } = await supabase.from('services').insert({
-        company_id: userProfile.company_id,
-        service_number: serviceNumber,
-        title: form.title.trim(),
-        description: form.description || null,
-        unit: form.unit,
-        unit_price: parseFloat(form.unit_price),
-        vat_rate: parseFloat(form.vat_rate),
-        is_active: true,
-      });
+        .update({
+          title: form.title.trim(),
+          description: form.description || null,
+          unit: form.unit,
+          unit_price: parseFloat(form.unit_price),
+          vat_rate: parseFloat(form.vat_rate),
+        })
+        .eq('id', id);
 
       if (error) throw error;
       toast.success('Leistung wurde gespeichert!');
@@ -79,6 +95,14 @@ export function CreateService() {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="p-4 sm:p-6 lg:p-12 flex items-center gap-3 text-muted-foreground">
+        <Loader2 className="w-6 h-6 animate-spin" /><span>Lade Leistung...</span>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 sm:p-6 lg:p-12 space-y-6 max-w-2xl mx-auto">
       <div className="flex items-center gap-4">
@@ -86,8 +110,8 @@ export function CreateService() {
           <ArrowLeft className="w-4 h-4" />Zurück
         </Button>
         <div>
-          <h1 className="text-3xl sm:text-4xl">Neue Leistung</h1>
-          <p className="text-muted-foreground mt-1">Leistung zur Bibliothek hinzufügen</p>
+          <h1 className="text-3xl sm:text-4xl">Leistung bearbeiten</h1>
+          <p className="text-muted-foreground mt-1">Änderungen speichern</p>
         </div>
       </div>
 
@@ -124,7 +148,6 @@ export function CreateService() {
             <Input className="h-12 text-base" type="number" step="0.01" placeholder="0.00"
               value={form.unit_price} onChange={set('unit_price')} />
           </div>
-          {/* FIX: MwSt. als Dropdown nur 0%, 7%, 19% */}
           <div className="space-y-2">
             <Label className="text-base">MwSt.</Label>
             <Select value={form.vat_rate} onValueChange={v => setForm(p => ({ ...p, vat_rate: v }))}>
@@ -151,7 +174,7 @@ export function CreateService() {
         <Button size="lg" className="h-14 text-lg gap-3" onClick={handleSave} disabled={saving}>
           {saving
             ? <><Loader2 className="w-5 h-5 animate-spin" />Speichern...</>
-            : <><Check className="w-5 h-5" />Leistung speichern</>}
+            : <><Check className="w-5 h-5" />Änderungen speichern</>}
         </Button>
         <Button variant="outline" size="lg" className="h-14 text-lg"
           onClick={() => navigate('/leistungen')} disabled={saving}>

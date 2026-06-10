@@ -4,6 +4,7 @@ import { Input } from "../components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Search, FileText, Receipt, Download, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router";
 import { useQuotes, useInvoices, formatCurrency, formatDate, getCustomerName, getStatusLabel, getStatusColors } from "../../lib/useSupabaseData";
 import { useAuth } from "../../lib/AuthContext";
 import { exportPdf } from "../../lib/pdfExport";
@@ -14,9 +15,10 @@ export function Archive() {
   const { invoices, loading: iLoading } = useInvoices();
   const [search, setSearch] = useState('');
   const [exporting, setExporting] = useState<string | null>(null);
+  const navigate = useNavigate();
 
-  const archivedQuotes = quotes.filter(q => ['accepted','rejected','expired'].includes(q.status));
-  const archivedInvoices = invoices.filter(i => ['paid','cancelled'].includes(i.status));
+  const archivedQuotes = quotes.filter(q => ['accepted', 'rejected', 'expired'].includes(q.status));
+  const archivedInvoices = invoices.filter(i => ['paid', 'cancelled'].includes(i.status));
 
   const filteredQuotes = archivedQuotes.filter(q =>
     q.title?.toLowerCase().includes(search.toLowerCase()) ||
@@ -58,6 +60,7 @@ export function Archive() {
           <TabsTrigger value="quotes">Angebote ({archivedQuotes.length})</TabsTrigger>
         </TabsList>
 
+        {/* Rechnungen */}
         <TabsContent value="invoices" className="space-y-4">
           {iLoading ? (
             <div className="flex items-center gap-3 text-muted-foreground py-8">
@@ -89,17 +92,24 @@ export function Archive() {
                     <div className="text-muted-foreground">Erstellt: {formatDate(invoice.invoice_date)}</div>
                     {invoice.paid_date && <div className="text-green-400">Bezahlt: {formatDate(invoice.paid_date)}</div>}
                   </div>
-                  <Button variant="outline" size="sm" className="h-10 gap-2"
-                    onClick={() => handlePdf('invoice', invoice)} disabled={exporting === invoice.id}>
-                    {exporting === invoice.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                    PDF
-                  </Button>
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    <Button variant="outline" size="sm" className="h-10 gap-2 flex-1 sm:flex-initial"
+                      onClick={() => handlePdf('invoice', invoice)} disabled={exporting === invoice.id}>
+                      {exporting === invoice.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                      PDF
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-10 flex-1 sm:flex-initial"
+                      onClick={() => navigate(`/rechnungen/${invoice.id}`)}>
+                      Details
+                    </Button>
+                  </div>
                 </div>
               </div>
             </Card>
           ))}
         </TabsContent>
 
+        {/* Angebote */}
         <TabsContent value="quotes" className="space-y-4">
           {qLoading ? (
             <div className="flex items-center gap-3 text-muted-foreground py-8">
@@ -130,11 +140,17 @@ export function Archive() {
                     <div className="text-xl font-bold">{formatCurrency(quote.total)}</div>
                     <div className="text-sm text-muted-foreground">{formatDate(quote.quote_date)}</div>
                   </div>
-                  <Button variant="outline" size="sm" className="h-10 gap-2"
-                    onClick={() => handlePdf('quote', quote)} disabled={exporting === quote.id}>
-                    {exporting === quote.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                    PDF
-                  </Button>
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    <Button variant="outline" size="sm" className="h-10 gap-2 flex-1 sm:flex-initial"
+                      onClick={() => handlePdf('quote', quote)} disabled={exporting === quote.id}>
+                      {exporting === quote.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                      PDF
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-10 flex-1 sm:flex-initial"
+                      onClick={() => navigate(`/angebote/${quote.id}`)}>
+                      Details
+                    </Button>
+                  </div>
                 </div>
               </div>
             </Card>

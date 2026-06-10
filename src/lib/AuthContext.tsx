@@ -68,7 +68,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-
       if (error) throw error;
       return data;
     } catch (error) {
@@ -77,7 +76,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Lädt Profil + Company mit explizitem Access Token via REST
+  // FIX: Einladung als angenommen markieren und User dem Unternehmen zuordnen
+  const acceptInvitation = async (
+    invitation: Invitation,
+    userId: string,
+    name: string,
+    email: string,
+  ): Promise<{ error: any }> => {
+    try {
+      // 1. Einladung als accepted markieren
+      const { error: invErr } = await supabase
+        .from('employee_invitations')
+        .update({ status: 'accepted' })
+        .eq('id', invitation.id);
+      if (invErr) throw invErr;
+
+      // 2. User-Profil mit der company_id aus der Einladung anlegen/updaten
+      const { error: profileErr } = await supabase
+        .from('user_profiles')
+        .upsert({
+          id: userId,
+          company_id: invitation.company_id,
+          name,
+          email: email.toLowerCase(),
+          role: invitation.role as 'admin' | 'user',
+          is_active: true,
+        });
+      if (profileErr) throw profileErr;
+
+      return { error: null };
+    } catch (err) {
+      return { error: err };
+    }
+  };
+
   const loadUserProfile = async (userId: string, accessToken: string): Promise<void> => {
     try {
       const SUPABASE_URL = 'https://glbwsibmhpcrnybtdups.supabase.co';
@@ -97,7 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const profile = profiles?.[0] ?? null;
 
       if (!profile) {
-        console.warn('Kein Profil gefunden für User:', userId, '- logge aus');
+        console.warn('Kein Profil gefunden für User:', userId);
         await supabase.auth.signOut();
         return;
       }
@@ -128,8 +160,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('AUTH EVENT:', event, session?.user?.id ?? 'null');
-
         if (session?.user && (
           event === 'INITIAL_SESSION' ||
           event === 'TOKEN_REFRESHED' ||
@@ -137,7 +167,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         )) {
           setSession(session);
           setUser(session.user);
-          // Verhindert Doppelaufruf wenn SIGNED_IN + INITIAL_SESSION zusammen feuern
           if (lastHandledUserId !== session.user.id || event === 'TOKEN_REFRESHED') {
             lastHandledUserId = session.user.id;
             await loadUserProfile(session.user.id, session.access_token);
@@ -149,20 +178,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUserProfile(null);
           setCompany(null);
         }
-
         setLoading(false);
       }
     );
 
-    return () => {
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
   const signIn = async (email: string, password: string) => {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-
       if (error) return { error };
 
       if (data.user) {
@@ -174,21 +199,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (!profile) {
           await supabase.auth.signOut();
-          return {
-            error: {
-              message: 'Ihr Account ist noch nicht eingerichtet. Bitte kontaktieren Sie Ihren Administrator.',
-            },
-          };
+          return { error: { message: 'Ihr Account ist noch nicht eingerichtet. Bitte kontaktieren Sie Ihren Administrator.' } };
         }
-
         if (!profile.is_active) {
           await supabase.auth.signOut();
-          return {
-            error: { message: 'Ihr Account wurde deaktiviert. Bitte kontaktieren Sie Ihren Administrator.' },
-          };
+          return { error: { message: 'Ihr Account wurde deaktiviert. Bitte kontaktieren Sie Ihren Administrator.' } };
         }
       }
-
       return { error: null };
     } catch (error: any) {
       return { error };
@@ -197,6 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string, name: string, companyName?: string) => {
     try {
+      // FIX: Einladung prüfen VOR der Registrierung
       const invitation = await checkInvitation(email);
 
       if (!invitation && (!companyName || companyName.trim() === '')) {
@@ -206,21 +224,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: {
-          data: { name, companyName },
-        },
+        options: { data: { name, companyName } },
       });
 
       if (error) return { error };
       if (!data.user) return { error: { message: 'User konnte nicht erstellt werden.' } };
 
       const accessToken = data.session?.access_token;
-
       if (!accessToken) {
         return { error: { message: 'Kein Token erhalten. Bitte E-Mail bestätigen und neu anmelden.' } };
       }
 
-      // Edge Function mit Retry für Free Plan Cold Starts
+      // FIX: Einladungs-Pfad — kein Edge Function Call, direkt Profil anlegen
+      if (invitation) {
+        const { error: acceptErr } = await acceptInvitation(
+          invitation,
+          data.user.id,
+          name,
+          email,
+        );
+        if (acceptErr) {
+          console.error('Fehler beim Annehmen der Einladung:', acceptErr);
+          return { error: { message: 'Einladung konnte nicht verarbeitet werden.' } };
+        }
+        await loadUserProfile(data.user.id, accessToken);
+        return { error: null };
+      }
+
+      // Normaler Pfad — Edge Function erstellt Company
       const callEdgeFunction = async (attempt: number): Promise<{ ok: boolean; errorMsg?: string }> => {
         try {
           const response = await fetch(EDGE_FUNCTION_URL, {
@@ -231,35 +262,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             },
             body: JSON.stringify({ user: data.user }),
           });
-
           if (response.ok) return { ok: true };
-
           const errData = await response.json().catch(() => ({}));
-          console.error(`Edge Function Fehler (Versuch ${attempt}):`, errData);
           return { ok: false, errorMsg: errData.error };
         } catch (err) {
-          console.error(`Edge Function Exception (Versuch ${attempt}):`, err);
           return { ok: false };
         }
       };
 
       let result = await callEdgeFunction(1);
-      if (!result.ok) {
-        await new Promise(r => setTimeout(r, 2000));
-        result = await callEdgeFunction(2);
-      }
-      if (!result.ok) {
-        await new Promise(r => setTimeout(r, 2000));
-        result = await callEdgeFunction(3);
-      }
+      if (!result.ok) { await new Promise(r => setTimeout(r, 2000)); result = await callEdgeFunction(2); }
+      if (!result.ok) { await new Promise(r => setTimeout(r, 2000)); result = await callEdgeFunction(3); }
 
       if (!result.ok) {
         return { error: { message: result.errorMsg || 'Profil konnte nicht erstellt werden.' } };
       }
 
-      // Profil direkt laden nach erfolgreicher Edge Function
       await loadUserProfile(data.user.id, accessToken);
-
       return { error: null };
     } catch (error: any) {
       return { error };
@@ -268,40 +287,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
-    if (!error) {
-      setUserProfile(null);
-      setCompany(null);
-    }
+    if (!error) { setUserProfile(null); setCompany(null); }
     return { error };
   };
 
   const refreshProfile = async () => {
-    if (user && session) {
-      await loadUserProfile(user.id, session.access_token);
-    }
+    if (user && session) await loadUserProfile(user.id, session.access_token);
   };
 
-  const value = {
-    session,
-    user,
-    userProfile,
-    company,
-    loading,
-    isAdmin: userProfile?.role === 'admin',
-    signIn,
-    signUp,
-    signOut,
-    refreshProfile,
-    checkInvitation,
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{
+      session, user, userProfile, company, loading,
+      isAdmin: userProfile?.role === 'admin',
+      signIn, signUp, signOut, refreshProfile, checkInvitation,
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (context === undefined) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 }

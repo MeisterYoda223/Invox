@@ -1,6 +1,6 @@
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
-import { FileText, Receipt, AlertCircle, CheckCircle, Loader2 } from "lucide-react";
+import { FileText, Receipt, AlertCircle, CheckCircle, Loader2, Users } from "lucide-react";
 import { Link } from "react-router";
 import { useQuotes, useInvoices, formatCurrency, formatDate, getCustomerName, getStatusLabel, getStatusColors } from "../../lib/useSupabaseData";
 import { useAuth } from '../../lib/AuthContext';
@@ -13,11 +13,11 @@ export function Dashboard() {
 
   const loading = qLoading || iLoading;
 
-  const openQuotes = quotes.filter(q => ['draft','sent'].includes(q.status));
-  const openInvoices = invoices.filter(i => ['sent','draft'].includes(i.status));
+  const openQuotes = quotes.filter(q => ['draft', 'sent'].includes(q.status));
+  const openInvoices = invoices.filter(i => ['sent', 'draft'].includes(i.status));
   const overdueInvoices = invoices.filter(i => i.status === 'overdue');
   const paidThisMonth = invoices
-    .filter(i => i.status === 'paid' && i.paid_date?.startsWith(new Date().toISOString().slice(0,7)))
+    .filter(i => i.status === 'paid' && i.paid_date?.startsWith(new Date().toISOString().slice(0, 7)))
     .reduce((sum, i) => sum + Number(i.total), 0);
 
   const recent = [
@@ -101,11 +101,27 @@ export function Dashboard() {
             )}
           </Card>
 
+          {/* FIX: Quickbuttons mit korrekten type-Parametern */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {[
-              { to: '/erstellen', icon: FileText, title: 'Neues Angebot', desc: 'Schnell ein neues Angebot erstellen' },
-              { to: '/erstellen', icon: Receipt, title: 'Neue Rechnung', desc: 'Schnell eine neue Rechnung erstellen' },
-              { to: '/kunden', icon: CheckCircle, title: 'Kunden', desc: 'Kunden anzeigen und verwalten' },
+              {
+                to: '/erstellen?type=quote',
+                icon: FileText,
+                title: 'Neues Angebot',
+                desc: 'Schnell ein neues Angebot erstellen',
+              },
+              {
+                to: '/erstellen?type=invoice',
+                icon: Receipt,
+                title: 'Neue Rechnung',
+                desc: 'Schnell eine neue Rechnung erstellen',
+              },
+              {
+                to: '/kunden',
+                icon: Users,
+                title: 'Kunden',
+                desc: 'Kunden anzeigen und verwalten',
+              },
             ].map(action => (
               <Link key={action.title} to={action.to}>
                 <Card className="p-6 sm:p-8 hover:bg-card/80 transition-colors cursor-pointer h-full">

@@ -1,4 +1,6 @@
-import { Quote, Invoice, Customer, QuoteItem, formatCurrency, formatDate, getCustomerName } from './useSupabaseData';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+import { Quote, Invoice, QuoteItem, formatCurrency, formatDate, getCustomerName } from './useSupabaseData';
 
 interface Company {
   company_name: string;
@@ -18,15 +20,10 @@ interface Company {
   invoice_footer?: string;
 }
 
-function buildHtml(
-  type: 'quote' | 'invoice',
-  doc: Quote | Invoice,
-  company: Company,
-): string {
+function buildHtml(type: 'quote' | 'invoice', doc: Quote | Invoice, company: Company): string {
   const isInvoice = type === 'invoice';
   const inv = doc as Invoice;
   const qt = doc as Quote;
-
   const number = isInvoice ? inv.invoice_number : qt.quote_number;
   const date = isInvoice ? inv.invoice_date : qt.quote_date;
   const secondDate = isInvoice
@@ -52,10 +49,7 @@ function buildHtml(
     </tr>
   `).join('');
 
-  const vatRate = items.length > 0
-    ? Math.round(((doc.vat_amount / doc.subtotal) * 100) || 19)
-    : 19;
-
+  const vatRate = items.length > 0 ? Math.round(((doc.vat_amount / doc.subtotal) * 100) || 19) : 19;
   const footer = isInvoice ? (company.invoice_footer ?? '') : (company.quote_footer ?? '');
   const bankInfo = company.iban ? `
     <div class="bank-info">
@@ -71,12 +65,12 @@ function buildHtml(
 <meta charset="UTF-8"/>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: Arial, sans-serif; font-size: 11pt; color: #1a1a1a; padding: 40px; max-width: 800px; margin: auto; }
+  body { font-family: Arial, sans-serif; font-size: 11pt; color: #1a1a1a; background: white; width: 794px; padding: 48px; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; }
   .company-name { font-size: 22pt; font-weight: bold; color: #1a56db; }
-  .company-info { font-size: 9pt; color: #555; line-height: 1.6; }
+  .company-info { font-size: 9pt; color: #555; line-height: 1.6; margin-top: 6px; }
   .doc-title { font-size: 18pt; font-weight: bold; margin-bottom: 6px; }
-  .doc-meta { font-size: 10pt; color: #444; line-height: 1.8; }
+  .doc-meta { font-size: 10pt; color: #444; line-height: 1.8; text-align: right; }
   .addresses { display: flex; justify-content: space-between; margin: 30px 0; gap: 40px; }
   .address-box { flex: 1; }
   .address-label { font-size: 8pt; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
@@ -94,10 +88,11 @@ function buildHtml(
   .totals-row { display: flex; justify-content: space-between; padding: 5px 0; font-size: 10pt; border-bottom: 1px solid #eee; }
   .totals-row.total { font-size: 13pt; font-weight: bold; color: #1a56db; border-bottom: none; border-top: 2px solid #1a56db; padding-top: 8px; margin-top: 4px; }
   .notes { margin: 20px 0; padding: 14px; background: #f8f9ff; border-left: 3px solid #1a56db; font-size: 10pt; line-height: 1.6; }
-  .footer-text { margin-top: 24px; font-size: 9pt; color: #666; line-height: 1.6; }
+  .footer-text { margin-top: 16px; font-size: 9pt; color: #666; line-height: 1.6; }
   .bank-info { margin-top: 16px; font-size: 9pt; color: #555; line-height: 1.7; }
   .divider { border: none; border-top: 1px solid #eee; margin: 24px 0; }
   .tax-info { font-size: 9pt; color: #666; margin-top: 8px; }
+  h2 { font-size: 13pt; margin-bottom: 4px; }
 </style>
 </head>
 <body>
@@ -111,7 +106,7 @@ function buildHtml(
         ${company.email ? `E-Mail: ${company.email}` : ''}
       </div>
     </div>
-    <div style="text-align:right">
+    <div>
       <div class="doc-title">${isInvoice ? 'RECHNUNG' : 'ANGEBOT'}</div>
       <div class="doc-meta">
         <p><strong>Nr.:</strong> ${number}</p>
@@ -138,7 +133,7 @@ function buildHtml(
     </div>
   </div>
 
-  <h2 style="font-size:13pt; margin-bottom:4px;">${doc.title}</h2>
+  <h2>${doc.title}</h2>
 
   <table>
     <thead>
@@ -160,18 +155,74 @@ function buildHtml(
   </div>
 
   <p class="tax-info">Alle Preise zzgl. ${vatRate}% Mehrwertsteuer.</p>
-
   ${doc.notes ? `<div class="notes"><strong>Hinweise:</strong><br/>${doc.notes}</div>` : ''}
-
   <hr class="divider"/>
-
   ${bankInfo}
-  ${isInvoice && company.payment_terms ? `
-    <p class="footer-text">Bitte überweisen Sie den Betrag innerhalb von ${company.payment_terms} Tagen.</p>
-  ` : ''}
+  ${isInvoice && company.payment_terms ? `<p class="footer-text">Bitte überweisen Sie den Betrag innerhalb von ${company.payment_terms} Tagen.</p>` : ''}
   ${footer ? `<p class="footer-text">${footer}</p>` : ''}
 </body>
 </html>`;
+}
+
+// HTML → PDF Blob via html2canvas + jsPDF
+async function htmlToPdfBlob(html: string): Promise<Blob> {
+  // Temporäres verstecktes iframe zum Rendern
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:794px;height:1123px;border:none;visibility:hidden;';
+  document.body.appendChild(iframe);
+
+  try {
+    const iframeDoc = iframe.contentDocument!;
+    iframeDoc.open();
+    iframeDoc.write(html);
+    iframeDoc.close();
+
+    // Warten bis Fonts/Styles geladen
+    await new Promise(r => setTimeout(r, 300));
+
+    const body = iframeDoc.body;
+    const canvas = await html2canvas(body, {
+      scale: 2,              // Hohe Auflösung
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      width: 794,
+      windowWidth: 794,
+      logging: false,
+    });
+
+    // A4: 210 × 297 mm
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+
+    const imgData = canvas.toDataURL('image/png');
+    const imgH = (canvas.height * pageW) / canvas.width;
+
+    // Mehrseitig falls Inhalt länger als eine A4-Seite
+    let yOffset = 0;
+    let remaining = imgH;
+
+    while (remaining > 0) {
+      if (yOffset > 0) pdf.addPage();
+      const sliceH = Math.min(remaining, pageH);
+      pdf.addImage(imgData, 'PNG', 0, -yOffset, pageW, imgH);
+      yOffset += pageH;
+      remaining -= sliceH;
+    }
+
+    return pdf.output('blob');
+  } finally {
+    document.body.removeChild(iframe);
+  }
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 export async function exportPdf(
@@ -183,46 +234,60 @@ export async function exportPdf(
   const number = type === 'invoice' ? (doc as Invoice).invoice_number : (doc as Quote).quote_number;
   const filename = `${number}.pdf`;
 
-  // Capacitor (iOS/Android)
-  try {
-    const { Filesystem, Directory } = await import('@capacitor/filesystem');
-    const { Share } = await import('@capacitor/share');
+  // PDF-Blob erzeugen (funktioniert auf Web und Capacitor)
+  const pdfBlob = await htmlToPdfBlob(html);
 
-    // Use print-to-pdf via browser window on mobile
-    const blob = await htmlToPdfBlob(html);
-    const base64 = await blobToBase64(blob);
-    const path = `${filename}`;
+  const isCapacitor = !!(window as any).Capacitor?.isNativePlatform?.();
 
-    await Filesystem.writeFile({ path, data: base64, directory: Directory.Cache });
-    const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache });
-    await Share.share({ title: filename, url: uri });
-    return;
-  } catch {
-    // Not Capacitor – fall through to web
+  // ── Capacitor (Android / iOS) ─────────────────────────────────────────────
+  if (isCapacitor) {
+    try {
+      const { Filesystem, Directory } = await import('@capacitor/filesystem');
+
+      const base64 = await blobToBase64(pdfBlob);
+
+      // In Documents speichern (dauerhaft, in Dateien-App sichtbar)
+      let savedUri = '';
+      try {
+        await Filesystem.writeFile({ path: filename, data: base64, directory: Directory.Documents });
+        const r = await Filesystem.getUri({ path: filename, directory: Directory.Documents });
+        savedUri = r.uri;
+      } catch {
+        await Filesystem.writeFile({ path: filename, data: base64, directory: Directory.Cache });
+        const r = await Filesystem.getUri({ path: filename, directory: Directory.Cache });
+        savedUri = r.uri;
+      }
+
+      // Share-Dialog mit der echten PDF-Datei
+      try {
+        const { Share } = await import('@capacitor/share');
+        const { value: canShare } = await Share.canShare();
+        if (canShare) {
+          await Share.share({
+            title: filename,
+            url: savedUri,
+            dialogTitle: 'PDF speichern oder teilen',
+          });
+        }
+      } catch (shareErr: any) {
+        const msg = (shareErr?.message ?? '').toLowerCase();
+        if (!msg.includes('cancel') && !msg.includes('dismiss') && !msg.includes('abort')) {
+          console.error('Share error:', shareErr);
+        }
+        // PDF ist bereits gespeichert — kein Problem
+      }
+
+      return;
+    } catch (err) {
+      console.error('Capacitor PDF error:', err);
+    }
   }
 
-  // Web: open in new tab and trigger print dialog
-  const win = window.open('', '_blank');
-  if (win) {
-    win.document.write(html);
-    win.document.close();
-    win.onload = () => {
-      win.print();
-    };
-  }
-}
-
-async function htmlToPdfBlob(html: string): Promise<Blob> {
-  // On web without a PDF lib, we just create an HTML blob
-  // and rely on the print dialog
-  return new Blob([html], { type: 'text/html' });
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve((reader.result as string).split(',')[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+  // ── Web: direkt herunterladen ─────────────────────────────────────────────
+  const url = URL.createObjectURL(pdfBlob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
